@@ -56,7 +56,9 @@ def main() -> None:
         page_icon="📋",
         layout="centered",
     )
-    st.title("Model Card Studio")
+    from src.brand import apply_brand, hero
+    apply_brand(st)
+    hero(st, "Model Reporting", "Model Card Studio", "分類モデルの評価をモデルカード形式で表示し、校正・混同行列も可視化します。")
     st.caption("分類モデルの評価を、精度以外も含めてモデルカード形式で見せるアプリ")
 
     with st.sidebar:
