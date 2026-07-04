@@ -8,8 +8,29 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import altair as alt
 import streamlit as st
 
+# stlite(Pyodide) の pyarrow モックには sklearn が isinstance 判定に使う
+# Table/RecordBatch 等が無く train_test_split が落ちる。属性を補完する。
+# 実 pyarrow がある環境では何もしない。
+try:  # pragma: no cover
+    import pyarrow as _pa
+
+    for _name in ("Table", "RecordBatch", "Array", "ChunkedArray"):
+        if not hasattr(_pa, _name):
+            setattr(_pa, _name, type(_name, (), {}))
+except Exception:  # noqa: BLE001
+    pass
+
+from src.brand import (
+    apply_brand,
+    footer_backlink,
+    hero,
+    section,
+    sidebar_header,
+    themed_altair,
+)
 from src.data import available_datasets, load_dataset
 from src.limitations import generate_limitations
 from src.metrics import (
@@ -28,7 +49,8 @@ DATASET_LABELS = {
 }
 
 
-@st.cache_data(show_spinner=False)
+# stlite(Pyodide) は pyarrow がモックのため、シリアライズを伴う st.cache_data は使えない
+@st.cache_resource(show_spinner=False)
 def train_pipeline(dataset_name: str, test_size: float, random_state: int) -> dict:
     """データ読込→学習→テスト予測確率までをキャッシュする。しきい値は含めない。"""
     ds = load_dataset(dataset_name, test_size=test_size, random_state=random_state)
@@ -56,13 +78,18 @@ def main() -> None:
         page_icon="📋",
         layout="centered",
     )
-    from src.brand import apply_brand, hero
     apply_brand(st)
-    hero(st, "Model Reporting", "Model Card Studio", "分類モデルの評価をモデルカード形式で表示し、校正・混同行列も可視化します。")
-    st.caption("分類モデルの評価を、精度以外も含めてモデルカード形式で見せるアプリ")
+    themed_altair(alt)
+    hero(
+        st,
+        "MODEL GOVERNANCE",
+        "Model Card Studio",
+        "分類モデルの評価を、精度以外も含めてモデルカード形式で表示し、較正・混同行列も可視化します。",
+        chips=["Python", "scikit-learn", "Altair", "Model Card"],
+    )
 
     with st.sidebar:
-        st.header("設定")
+        sidebar_header(st, "設定")
         dataset_name = st.selectbox(
             "データセット",
             options=list(available_datasets()),
@@ -79,8 +106,8 @@ def main() -> None:
             "判定しきい値（陽性確率）", min_value=0.0, max_value=1.0, value=0.5, step=0.01
         )
         st.divider()
-        if st.button("再学習（キャッシュクリア）", use_container_width=True):
-            st.cache_data.clear()
+        if st.button("再学習（キャッシュクリア）", width="stretch"):
+            st.cache_resource.clear()
             st.session_state["last_retrain"] = True
             st.rerun()
         if st.session_state.get("last_retrain"):
@@ -117,7 +144,7 @@ def main() -> None:
     )
 
     with tab_summary:
-        st.subheader("データセット概要")
+        section(st, "DATASET", "データセット概要")
         st.write(bundle["description"])
         c1, c2, c3 = st.columns(3)
         c1.metric("総サンプル数", bundle["total_count"])
@@ -134,7 +161,7 @@ def main() -> None:
         st.caption(f"データ出所: {bundle['source']}")
 
     with tab_metrics:
-        st.subheader("評価指標")
+        section(st, "METRICS", "評価指標")
         st.caption(f"しきい値 = {threshold:.2f} のとき")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("正解率", f"{metrics['accuracy']:.3f}")
@@ -151,36 +178,32 @@ def main() -> None:
             )
 
     with tab_cm:
-        st.subheader("混同行列")
-        fig = plot_confusion_matrix(confusion, bundle["pos_label"], bundle["neg_label"])
-        st.pyplot(fig)
+        section(st, "CONFUSION MATRIX", "混同行列")
+        chart = plot_confusion_matrix(confusion, bundle["pos_label"], bundle["neg_label"])
+        st.altair_chart(chart, width="stretch")
         st.caption(
             f"TP={confusion['tp']} / FP={confusion['fp']} / "
             f"TN={confusion['tn']} / FN={confusion['fn']}"
         )
 
     with tab_cal:
-        st.subheader("較正")
+        section(st, "CALIBRATION", "較正")
         c1, c2 = st.columns(2)
         c1.metric("Brierスコア", f"{calibration['brier']:.3f}")
         c2.metric("ECE", f"{calibration['ece']:.3f}")
-        fig = plot_calibration(calibration)
-        st.pyplot(fig)
+        chart = plot_calibration(calibration)
+        st.altair_chart(chart, width="stretch")
         st.caption("点の大きさは bin 内サンプル数に概ね比例。対角線に近いほど較正が良い。")
 
     with tab_lim:
-        st.subheader("制限事項（自動生成）")
+        section(st, "LIMITATIONS", "制限事項（自動生成）")
         st.markdown(
             "**精度だけではモデルを評価できない。** 以下は指標とデータ特性から自動抽出した注意点。"
         )
         for i, item in enumerate(limitations, 1):
             st.markdown(f"{i}. {item}")
 
-    st.divider()
-    st.caption(
-        "Model Card Studio ・ sklearn / 合成データのみ使用・APIキー不要・"
-        "計算ロジックは src/・UI は app/streamlit_app.py"
-    )
+    footer_backlink(st, repo="model-card-studio")
 
 
 if __name__ == "__main__":
